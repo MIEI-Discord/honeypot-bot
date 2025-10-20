@@ -1,0 +1,11 @@
+[package]
+name = "honeypot-bot"
+version = "0.1.0"
+authors = ["João Figueira <business@jmc-figueira.dev>"]
+edition = "2024"
+description = "A bot to assist with setting up a honeypot channel in a Discord Server (to automatically catch and silence/ban compromised accounts that spam post phishing links)"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "debuginfo"
