@@ -1,15 +1,26 @@
+use clap::Parser;
 use serenity::{Client, all::GatewayIntents};
 use std::env;
 
-use crate::handler::Handler;
+use crate::{config::Args, handler::Handler};
 
 mod config;
 mod handler;
 
 #[tokio::main]
 async fn main() {
+    #[cfg(all(not(debug_assertions), feature = "dev_env"))]
+    compile_error!(
+        "Loading the Discord token from a `.env` file through the `dev_env` feature is only supported for debug builds, for security reasons. Please compile in debug mode or remove the `dev_env` feature."
+    );
+
+    #[cfg(all(debug_assertions, feature = "dev_env"))]
+    dotenvy::dotenv().ok();
+
     let token = env::var("DISCORD_TOKEN")
         .expect("Discord bot token not set, make sure to set the `DISCORD_TOKEN` environment variable in your deployment.");
+
+    let config = Args::parse().to_config();
 
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 

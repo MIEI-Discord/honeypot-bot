@@ -1,6 +1,9 @@
 # Created by https://www.toptal.com/developers/gitignore/api/rust,rust-analyzer,windows,macos,linux,jetbrains+all,direnv,visualstudiocode
 # Edit at https://www.toptal.com/developers/gitignore?templates=rust,rust-analyzer,windows,macos,linux,jetbrains+all,direnv,visualstudiocode
 
+### Development Environment ###
+.env
+
 ### direnv ###
 .direnv
 .envrc
