@@ -3,6 +3,7 @@
 
 ### Development Environment ###
 .env
+config.toml
 
 ### direnv ###
 .direnv
