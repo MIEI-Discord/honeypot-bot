@@ -3,7 +3,10 @@ use std::{collections::HashMap, fs, path::PathBuf};
 use bitflags::bitflags;
 use clap::{Parser, ValueHint, value_parser};
 use serde::Deserialize;
-use serenity::all::{ChannelId, GuildId};
+use serenity::{
+    all::{ChannelId, GuildId, RoleId},
+    prelude::TypeMapKey,
+};
 
 #[derive(Parser, Debug)]
 #[command(about, long_about = None)]
@@ -35,21 +38,26 @@ impl Args {
 
 #[derive(Deserialize)]
 pub(crate) struct Config {
-    servers: HashMap<GuildId, ServerConfig>,
+    pub(crate) servers: HashMap<GuildId, ServerConfig>,
+}
+
+impl TypeMapKey for Config {
+    type Value = Self;
 }
 
 #[derive(Deserialize)]
-struct ServerConfig {
-    log_channel: ChannelId,
-    honeypot_channel: ChannelId,
+pub(crate) struct ServerConfig {
+    pub(crate) log_channel: ChannelId,
+    pub(crate) honeypot_channel: ChannelId,
+    pub(crate) warn_role: RoleId,
     #[serde(default)]
-    mod_actions: ModerationActions,
-    tolerant: bool,
+    pub(crate) mod_actions: ModerationActions,
+    pub(crate) tolerant: bool,
 }
 
 bitflags! {
     #[derive(Deserialize)]
-    struct ModerationActions: u8 {
+    pub(crate) struct ModerationActions: u8 {
         const WarnMods = 0b00001;
         const EraseMessages = 0b00010;
         const Mute = 0b00100;

@@ -2,7 +2,10 @@ use clap::Parser;
 use serenity::{Client, all::GatewayIntents};
 use std::env;
 
-use crate::{config::Args, handler::Handler};
+use crate::{
+    config::{Args, Config},
+    handler::Handler,
+};
 
 mod config;
 mod handler;
@@ -21,15 +24,23 @@ async fn main() {
         .expect("Discord bot token not set, make sure to set the `DISCORD_TOKEN` environment variable in your deployment.");
 
     let config = Args::parse().to_config();
+    let num_servers = config.servers.len();
 
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler)
+        .type_map_insert::<Config>(config)
         .await
         .expect("Error initializing the Discord bot client.");
 
-    if let Err(e) = client.start().await {
-        eprintln!("The bot client encountered an error: {e}");
+    // Simple case - no need for sharding
+    if num_servers < 2500 {
+        if let Err(e) = client.start().await {
+            eprintln!("The bot client encountered an error: {e}");
+        }
+    } else {
+        // Handling large servers - use case unsupported (for now)
+        unimplemented!();
     }
 }
