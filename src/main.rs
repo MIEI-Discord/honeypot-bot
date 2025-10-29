@@ -1,6 +1,7 @@
 use clap::Parser;
 use serenity::{Client, all::GatewayIntents};
 use std::env;
+use tracing::instrument;
 
 use crate::{
     config::{Args, Config},
@@ -11,7 +12,10 @@ mod config;
 mod handler;
 
 #[tokio::main]
+#[instrument]
 async fn main() {
+    tracing_subscriber::fmt::init();
+
     #[cfg(all(not(debug_assertions), feature = "dev_env"))]
     compile_error!(
         "Loading the Discord token from a `.env` file through the `dev_env` feature is only supported for debug builds, for security reasons. Please compile in debug mode or remove the `dev_env` feature."

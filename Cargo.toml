@@ -6,12 +6,15 @@ description = "A bot to assist with setting up a honeypot channel in a Discord S
 
 [dependencies]
 bitflags = { version = "2.10", features = ["serde"] }
+chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 dotenvy = { version = "0.15", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serenity = "0.12"
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
 toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [features]
 dev_env = ["dep:dotenvy"]

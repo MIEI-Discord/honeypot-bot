@@ -45,7 +45,7 @@ impl TypeMapKey for Config {
     type Value = Self;
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub(crate) struct ServerConfig {
     pub(crate) log_channel: ChannelId,
     pub(crate) honeypot_channel: ChannelId,
@@ -56,7 +56,7 @@ pub(crate) struct ServerConfig {
 }
 
 bitflags! {
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug)]
     pub(crate) struct ModerationActions: u8 {
         const WarnMods = 0b00001;
         const EraseMessages = 0b00010;
