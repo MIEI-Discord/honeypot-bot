@@ -13,6 +13,7 @@
     nixd-git = inputs'.nixd.packages.default;
     pinix-git = inputs'.pinix.packages.default;
     jujutsu-git = inputs'.jujutsu.packages.default;
+    helix-git = inputs'.helix.packages.default;
 
     updateFlakes = pkgs.writeShellApplication {
       name = "update-flakes";
@@ -57,6 +58,7 @@
             nixd-git
             pinix-git
             jujutsu-git
+            helix-git
             updateFlakes
             pkgs.zed-editor-fhs
           ]
