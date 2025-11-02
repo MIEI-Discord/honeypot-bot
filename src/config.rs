@@ -49,7 +49,7 @@ impl TypeMapKey for Config {
 pub(crate) struct ServerConfig {
     pub(crate) log_channel: ChannelId,
     pub(crate) honeypot_channel: ChannelId,
-    pub(crate) warn_role: RoleId,
+    pub(crate) mod_role: RoleId,
     #[serde(default)]
     pub(crate) mod_actions: ModerationActions,
     pub(crate) tolerant: bool,

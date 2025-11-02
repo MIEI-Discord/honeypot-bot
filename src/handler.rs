@@ -8,6 +8,7 @@ use serenity::{
     async_trait,
 };
 use tracing::{error, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::config::{Config, ModerationActions, ServerConfig};
 
@@ -28,12 +29,26 @@ impl EventHandler for Handler {
                             if msg.channel_id == serv.honeypot_channel {
                                 // CAUGHT ONE! 🐻🍯
 
+                                let author = msg.member(&ctx).await;
+                                if let Err(e) = author {
+                                    warn!(
+                                        "There was an issue retrieving the message author member; could this be a DM? - {}",
+                                        e
+                                    );
+                                } else if author.unwrap().roles.contains(&serv.mod_role) {
+                                    info!(
+                                        "Message was posted by moderator {}; ignoring...",
+                                        msg.author.id
+                                    );
+                                    return;
+                                }
+
                                 let mut mod_log = CreateMessage::new();
 
                                 let mut log_message = MessageBuilder::new();
 
                                 if serv.mod_actions.contains(ModerationActions::WarnMods) {
-                                    log_message.mention(&serv.warn_role);
+                                    log_message.mention(&serv.mod_role);
                                 }
 
                                 log_message
@@ -72,10 +87,10 @@ impl EventHandler for Handler {
                                 // Let the mods decide for themselves
                                 if serv.tolerant && identical_messages.is_empty() {
                                     let mod_actions = CreateActionRow::Buttons(vec![
-                                        CreateButton::new("mod_act")
+                                        CreateButton::new(Self::ACCEPT_BUTTON_ID)
                                             .label("Perform Mod Actions")
                                             .style(ButtonStyle::Danger),
-                                        CreateButton::new("mod_dismiss")
+                                        CreateButton::new(Self::REJECT_BUTTON_ID)
                                             .label("Dismiss")
                                             .style(ButtonStyle::Secondary),
                                     ]);
@@ -198,8 +213,6 @@ impl EventHandler for Handler {
                                         && !serv.mod_actions.contains(ModerationActions::Ban)
                                     {
                                         if first_action {
-                                            first_action = false;
-
                                             log_message
                                                 .push_line_safe("")
                                                 .push_safe("The user's spam messages were deleted");
@@ -317,11 +330,11 @@ impl EventHandler for Handler {
 
                     match server_id.roles(&ctx).await {
                         Ok(serv_roles) => {
-                            if !serv_roles.contains_key(&server_config.warn_role) {
+                            if !serv_roles.contains_key(&server_config.mod_role) {
                                 // Role doesn't exist in this server
                                 warn!(
                                     "The provided role ({}) does not correspond to any roles available on the server {}",
-                                    &server_config.warn_role, server_id
+                                    &server_config.mod_role, server_id
                                 );
                                 return;
                             }
@@ -359,7 +372,7 @@ impl EventHandler for Handler {
                             .contains(ModerationActions::WarnMods)
                     {
                         hello_message
-                            .role(server_config.warn_role)
+                            .role(server_config.mod_role)
                             .push_line_safe(" will be warned when the honeypot is triggered.");
                     }
 
@@ -404,12 +417,19 @@ impl EventHandler for Handler {
                             .push_line_safe("Offending users' spam messages will be deleted.");
                     }
 
-                    if let Err(e) = server_config
+                    match server_config
                         .log_channel
                         .say(&ctx, hello_message.build())
                         .await
                     {
-                        error!("There was an issue sending the welcome message: {}", e);
+                        Ok(msg) => {
+                            if let Err(e) = msg.pin(&ctx).await {
+                                error!("There was an issue pinning the welcome message: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("There was an issue sending the welcome message: {}", e);
+                        }
                     }
                 }
             }
@@ -423,6 +443,9 @@ impl EventHandler for Handler {
 }
 
 impl Handler {
+    const ACCEPT_BUTTON_ID: &str = "honeypot-bot:mod_act";
+    const REJECT_BUTTON_ID: &str = "honeypot-bot:mod_dismiss";
+
     #[instrument]
     async fn search_for_spam_messages(
         ctx: &Context,
