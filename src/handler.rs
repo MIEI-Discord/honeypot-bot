@@ -3,10 +3,10 @@ use std::str::FromStr;
 use chrono::{Days, Local};
 use serenity::{
     all::{
-        ButtonStyle, ComponentInteractionDataKind, Context, CreateActionRow, CreateButton,
-        CreateEmbed, CreateEmbedAuthor, CreateMessage, EditInteractionResponse, EditMember,
-        EmbedMessageBuilding, EventHandler, GetMessages, GuildId, Interaction, Message,
-        MessageBuilder, Ready, Timestamp, UserId,
+        ButtonStyle, ComponentInteractionDataKind, Context, CreateActionRow, CreateAttachment,
+        CreateButton, CreateEmbed, CreateEmbedAuthor, CreateMessage, EditInteractionResponse,
+        EditMember, EmbedMessageBuilding, EventHandler, GetMessages, GuildId, Interaction,
+        MESSAGE_CODE_LIMIT, Message, MessageBuilder, Ready, Timestamp, UserId,
     },
     async_trait,
 };
@@ -50,7 +50,7 @@ impl EventHandler for Handler {
 
                                 let mut log_message = MessageBuilder::new();
 
-                                if serv.mod_actions.contains(ModerationActions::WarnMods) {
+                                if serv.warn_mods {
                                     log_message.mention(&serv.mod_role);
                                 }
 
@@ -120,147 +120,29 @@ impl EventHandler for Handler {
                                         );
                                     }
                                 } else {
-                                    let mut first_action = true;
-                                    if serv.mod_actions.contains(ModerationActions::Ban) {
-                                        first_action = false;
-                                        log_message
-                                            .push_line_safe("")
-                                            .push_safe("The user was banned");
+                                    Self::apply_mod_actions(
+                                        &ctx,
+                                        msg.author.id,
+                                        &msg.content,
+                                        log_message.push_line_safe("").push_line_safe(""),
+                                        (serv_id, serv),
+                                    )
+                                    .await;
 
-                                        if let Err(e) = serv_id.ban_with_reason(&ctx, msg.author.id, 1, "Caught spamming by the honeypot; account may be compromised").await {
-                                            error!("There was an issue banning the user {}: {}", msg.author.id, e);
+                                    let log_content = log_message.build();
 
-                                            let warning_message = MessageBuilder::new()
-                                                .push("⚠️ I was unable to ban the user ")
-                                                .user(msg.author.id)
-                                                .push_line_safe("; Please make sure the compromised account is dealt with.")
-                                                .build();
-
-                                            if let Err(e) = serv.log_channel.say(&ctx, warning_message).await {
-                                                error!("There was an issue sending the ban failure warning to the channel {}: {}", serv.log_channel, e);
-                                            }
-                                        }
+                                    if log_content.chars().count() > MESSAGE_CODE_LIMIT {
+                                        // Log message is too big, send as file instead
+                                        mod_log = mod_log.add_file(CreateAttachment::bytes(
+                                            log_content.into_bytes(),
+                                            "mod_log.txt",
+                                        ).description("Actions were taken, please check the file for the logs."));
+                                    } else {
+                                        mod_log = mod_log.content(log_content);
                                     }
 
-                                    if serv.mod_actions.contains(ModerationActions::Kick) {
-                                        if first_action {
-                                            first_action = false;
-
-                                            log_message
-                                                .push_line_safe("")
-                                                .push_safe("The user was kicked");
-                                        }
-
-                                        if let Err(e) = serv_id.kick_with_reason(&ctx, msg.author.id, "Caught spamming by the honeypot; account may be compromised").await {
-                                            error!("There was an issue kicking the user {}: {}", msg.author.id, e);
-
-                                            let warning_message = MessageBuilder::new()
-                                                .push("⚠️ I was unable to kick the user ")
-                                                .user(msg.author.id)
-                                                .push_line_safe("; Please make sure the compromised account is dealt with.")
-                                                .build();
-
-                                            if let Err(e) = serv.log_channel.say(&ctx, warning_message).await {
-                                                error!("There was an issue sending the kick failure warning to the channel {}: {}", serv.log_channel, e);
-                                            }
-                                        }
-                                    }
-
-                                    if serv.mod_actions.contains(ModerationActions::Mute) {
-                                        if first_action {
-                                            first_action = false;
-
-                                            log_message
-                                                .push_line_safe("")
-                                                .push_safe("The user was timed out for 1 day");
-                                        }
-
-                                        // 1-day mute hardcoded for now
-                                        let duration = Local::now().checked_add_days(Days::new(1));
-
-                                        match duration {
-                                            Some(time) => {
-                                                if let Err(e) = serv_id.edit_member(
-                                                    &ctx,
-                                                    msg.author.id,
-                                                    EditMember::new()
-                                                        .disable_communication_until_datetime(Timestamp::from(time))
-                                                        .audit_log_reason("Caught spamming by the honeypot; account may be compromised")
-                                                ).await {
-                                                    error!("There was an issue timing the user {} out: {}", msg.author.id, e);
-
-                                                    let warning_message = MessageBuilder::new()
-                                                        .push("⚠️ I was unable to time the user ")
-                                                        .user(msg.author.id)
-                                                        .push_line_safe(" out; Please make sure the compromised account is dealt with.")
-                                                        .build();
-
-                                                    if let Err(e) = serv.log_channel.say(&ctx, warning_message).await {
-                                                        error!("There was an issue sending the timeout failure warning to the channel {}: {}", serv.log_channel, e);
-                                                    }
-                                                }
-                                            },
-                                            None => {
-                                                error!("There was an issue timing the user {} out: Timeout duration returned None.", msg.author.id);
-
-                                                let warning_message = MessageBuilder::new()
-                                                    .push("⚠️ I was unable to time the user ")
-                                                    .user(msg.author.id)
-                                                    .push_line_safe(" out; Please make sure the compromised account is dealt with.")
-                                                    .build();
-
-                                                if let Err(e) = serv.log_channel.say(&ctx, warning_message).await {
-                                                    error!("There was an issue sending the timeout failure warning to the channel {}: {}", serv.log_channel, e);
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if serv.mod_actions.contains(ModerationActions::EraseMessages)
-                                        && !serv.mod_actions.contains(ModerationActions::Ban)
-                                    {
-                                        if first_action {
-                                            log_message
-                                                .push_line_safe("")
-                                                .push_safe("The user's spam messages were deleted");
-                                        } else {
-                                            log_message.push_safe(
-                                                " and the user's spam messages were deleted",
-                                            );
-                                        }
-
-                                        for ident_msg in identical_messages {
-                                            if let Err(e) = ident_msg.delete(&ctx).await {
-                                                error!(
-                                                    "Unable to delete message {} in channel {}: {}",
-                                                    ident_msg.id, ident_msg.channel_id, e
-                                                );
-
-                                                let warning_message = MessageBuilder::new()
-                                                    .push("⚠️ I was unable to delete the message in channel ")
-                                                    .channel(ident_msg.channel_id)
-                                                    .push_line_safe("; Please make sure any spam messages are deleted.")
-                                                    .build();
-
-                                                if let Err(e) = serv
-                                                    .log_channel
-                                                    .say(&ctx, warning_message)
-                                                    .await
-                                                {
-                                                    error!(
-                                                        "There was an issue sending the message deletion failure warning regarding message {} to the channel {}: {}",
-                                                        ident_msg.id, serv.log_channel, e
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    log_message.push_line_safe(".");
-                                    if let Err(e) = serv
-                                        .log_channel
-                                        .send_message(&ctx, mod_log.content(log_message.build()))
-                                        .await
+                                    if let Err(e) =
+                                        serv.log_channel.send_message(&ctx, mod_log).await
                                     {
                                         error!(
                                             "There was an error sending the action log message to the log channel {}: {}",
@@ -414,168 +296,28 @@ impl EventHandler for Handler {
                                             Err(e) => todo!(),
                                         };
 
-                                        let mut response_mesg = MessageBuilder::new();
-                                        response_mesg.push(&inter.message.content);
-
-                                        let mut first_action = true;
-                                        if serv_cfg.mod_actions.contains(ModerationActions::Ban) {
-                                            first_action = false;
-                                            response_mesg
-                                                .push_line_safe("")
-                                                .push_line_safe("")
-                                                .push_italic_safe("The user was banned");
-
-                                            if let Err(e) = inter_serv.ban_with_reason(&ctx, target_user_id, 1, "Caught spamming by the honeypot; account may be compromised").await {
-                                                error!("There was an issue banning the user {}: {}", target_user_id, e);
-
-                                                let warning_message = MessageBuilder::new()
-                                                    .push("⚠️ I was unable to ban the user ")
-                                                    .user(target_user_id)
-                                                    .push_line_safe("; Please make sure the compromised account is dealt with.")
-                                                    .build();
-
-                                                if let Err(e) = serv_cfg.log_channel.say(&ctx, warning_message).await {
-                                                    error!("There was an issue sending the ban failure warning to the channel {}: {}", serv_cfg.log_channel, e);
-                                                }
-                                            }
-                                        }
-
-                                        if serv_cfg.mod_actions.contains(ModerationActions::Kick) {
-                                            if first_action {
-                                                first_action = false;
-
-                                                response_mesg
-                                                    .push_line_safe("")
-                                                    .push_line_safe("")
-                                                    .push_italic_safe("The user was kicked");
-                                            }
-
-                                            if let Err(e) = inter_serv.kick_with_reason(&ctx, target_user_id, "Caught spamming by the honeypot; account may be compromised").await {
-                                                error!("There was an issue kicking the user {}: {}", target_user_id, e);
-
-                                                let warning_message = MessageBuilder::new()
-                                                    .push("⚠️ I was unable to kick the user ")
-                                                    .user(target_user_id)
-                                                    .push_line_safe("; Please make sure the compromised account is dealt with.")
-                                                    .build();
-
-                                                if let Err(e) = serv_cfg.log_channel.say(&ctx, warning_message).await {
-                                                    error!("There was an issue sending the kick failure warning to the channel {}: {}", serv_cfg.log_channel, e);
-                                                }
-                                            }
-                                        }
-
-                                        if serv_cfg.mod_actions.contains(ModerationActions::Mute) {
-                                            if first_action {
-                                                first_action = false;
-
-                                                response_mesg
-                                                    .push_line_safe("")
-                                                    .push_line_safe("")
-                                                    .push_italic_safe(
-                                                        "The user was timed out for 1 day",
-                                                    );
-                                            }
-
-                                            // 1-day mute hardcoded for now
-                                            let duration =
-                                                Local::now().checked_add_days(Days::new(1));
-
-                                            match duration {
-                                                Some(time) => {
-                                                    if let Err(e) = inter_serv.edit_member(
-                                                        &ctx,
-                                                        target_user_id,
-                                                        EditMember::new()
-                                                            .disable_communication_until_datetime(Timestamp::from(time))
-                                                            .audit_log_reason("Caught spamming by the honeypot; account may be compromised")
-                                                    ).await {
-                                                        error!("There was an issue timing the user {} out: {}", target_user_id, e);
-
-                                                        let warning_message = MessageBuilder::new()
-                                                            .push("⚠️ I was unable to time the user ")
-                                                            .user(target_user_id)
-                                                            .push_line_safe(" out; Please make sure the compromised account is dealt with.")
-                                                            .build();
-
-                                                        if let Err(e) = serv_cfg.log_channel.say(&ctx, warning_message).await {
-                                                            error!("There was an issue sending the timeout failure warning to the channel {}: {}", serv_cfg.log_channel, e);
-                                                        }
-                                                    }
-                                                },
+                                        let original_msg_content =
+                                            match inter.message.embeds[0].description {
+                                                Some(ref msg) => msg,
                                                 None => {
-                                                    error!("There was an issue timing the user {} out: Timeout duration returned None.", target_user_id);
-
-                                                    let warning_message = MessageBuilder::new()
-                                                        .push("⚠️ I was unable to time the user ")
-                                                        .user(target_user_id)
-                                                        .push_line_safe(" out; Please make sure the compromised account is dealt with.")
-                                                        .build();
-
-                                                    if let Err(e) = serv_cfg.log_channel.say(&ctx, warning_message).await {
-                                                        error!("There was an issue sending the timeout failure warning to the channel {}: {}", serv_cfg.log_channel, e);
-                                                    }
+                                                    todo!();
                                                 }
-                                            }
-                                        }
+                                            };
 
-                                        if serv_cfg
-                                            .mod_actions
-                                            .contains(ModerationActions::EraseMessages)
-                                            && !serv_cfg
-                                                .mod_actions
-                                                .contains(ModerationActions::Ban)
-                                        {
-                                            if first_action {
-                                                response_mesg
-                                                    .push_line_safe("")
-                                                    .push_line_safe("")
-                                                    .push_safe(
-                                                        "The user's spam messages were deleted",
-                                                    );
-                                            } else {
-                                                response_mesg.push_italic_safe(
-                                                    " and the user's spam messages were deleted",
-                                                );
-                                            }
+                                        let mut response_mesg = MessageBuilder::new();
+                                        response_mesg
+                                            .push(&inter.message.content)
+                                            .push_line_safe("")
+                                            .push_line_safe("");
 
-                                            let usr_msg = inter.message.content_safe(&ctx);
-
-                                            let identical_messages =
-                                                Self::search_for_spam_messages(
-                                                    &ctx,
-                                                    target_user_id,
-                                                    &usr_msg,
-                                                    (inter_serv, serv_cfg),
-                                                )
-                                                .await;
-
-                                            for ident_msg in identical_messages {
-                                                if let Err(e) = ident_msg.delete(&ctx).await {
-                                                    error!(
-                                                        "Unable to delete message {} in channel {}: {}",
-                                                        ident_msg.id, ident_msg.channel_id, e
-                                                    );
-
-                                                    let warning_message = MessageBuilder::new()
-                                                        .push("⚠️ I was unable to delete the message in channel ")
-                                                        .channel(ident_msg.channel_id)
-                                                        .push_line_safe("; Please make sure any spam messages are deleted.")
-                                                        .build();
-
-                                                    if let Err(e) = serv_cfg
-                                                        .log_channel
-                                                        .say(&ctx, warning_message)
-                                                        .await
-                                                    {
-                                                        error!(
-                                                            "There was an issue sending the message deletion failure warning regarding message {} to the channel {}: {}",
-                                                            ident_msg.id, serv_cfg.log_channel, e
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        Self::apply_mod_actions(
+                                            &ctx,
+                                            target_user_id,
+                                            original_msg_content,
+                                            &mut response_mesg,
+                                            (inter_serv, serv_cfg),
+                                        )
+                                        .await;
 
                                         let mod_actions = CreateActionRow::Buttons(vec![
                                             CreateButton::new(Self::ACCEPT_BUTTON_ID)
@@ -588,12 +330,24 @@ impl EventHandler for Handler {
                                                 .disabled(true),
                                         ]);
 
+                                        let response_content = response_mesg.build();
+
+                                        let mut edit_response = EditInteractionResponse::new();
+
+                                        if response_content.chars().count() > MESSAGE_CODE_LIMIT {
+                                            // Log message is too big, send as file instead
+                                            edit_response = edit_response.new_attachment(CreateAttachment::bytes(
+                                                response_content.into_bytes(),
+                                                "mod_log.txt"
+                                            ).description("Actions were taken, please check the file for the logs."));
+                                        } else {
+                                            edit_response = edit_response.content(response_content);
+                                        }
+
                                         if let Err(e) = inter
                                             .edit_response(
                                                 &ctx,
-                                                EditInteractionResponse::new()
-                                                    .content(response_mesg.build())
-                                                    .components(vec![mod_actions]),
+                                                edit_response.components(vec![mod_actions]),
                                             )
                                             .await
                                         {
@@ -692,55 +446,26 @@ impl EventHandler for Handler {
                         })
                         .push_line_safe(".");
 
-                    if server_config.tolerant
-                        || server_config
-                            .mod_actions
-                            .contains(ModerationActions::WarnMods)
-                    {
+                    if server_config.warn_mods {
                         hello_message
                             .role(server_config.mod_role)
                             .push_line_safe(" will be warned when the honeypot is triggered.");
                     }
 
-                    if server_config.mod_actions.intersects(
-                        ModerationActions::Mute | ModerationActions::Kick | ModerationActions::Ban,
-                    ) {
-                        hello_message.push_safe("Offending users will be ");
-                        let mut first_action = true;
+                    hello_message.push_safe("Offending users will be ");
 
-                        if server_config.mod_actions.contains(ModerationActions::Mute) {
-                            first_action = false;
-                            hello_message.push_bold_safe("muted");
-                        }
+                    match server_config.mod_actions {
+                        ModerationActions::Mute => hello_message.push_bold_safe("timed out"),
+                        ModerationActions::Kick => hello_message.push_bold_safe("kicked"),
+                        ModerationActions::Ban => hello_message.push_bold_safe("banned"),
+                    };
 
-                        if server_config.mod_actions.contains(ModerationActions::Kick) {
-                            if !first_action {
-                                hello_message.push_safe(", ");
-                            }
-                            first_action = false;
-                            hello_message.push_bold_safe("kicked");
-                        }
-
-                        if server_config.mod_actions.contains(ModerationActions::Ban) {
-                            if !first_action {
-                                hello_message.push_safe(", ");
-                            }
-                            hello_message.push_bold_safe("banned");
-                        }
-
-                        if server_config
-                            .mod_actions
-                            .contains(ModerationActions::EraseMessages)
-                        {
-                            hello_message.push_safe(" and their spam messages will be deleted");
-                        }
-                        hello_message.push_line_safe(".");
-                    } else if server_config
-                        .mod_actions
-                        .contains(ModerationActions::EraseMessages)
+                    if server_config.erase_messages
+                        || matches!(server_config.mod_actions, ModerationActions::Ban)
                     {
-                        hello_message
-                            .push_line_safe("Offending users' spam messages will be deleted.");
+                        hello_message.push_line_safe(" and their spam messages will be deleted.");
+                    } else {
+                        hello_message.push_line_safe(".");
                     }
 
                     match server_config
@@ -771,6 +496,7 @@ impl EventHandler for Handler {
 impl Handler {
     const ACCEPT_BUTTON_ID: &str = "honeypot-bot:mod_act";
     const REJECT_BUTTON_ID: &str = "honeypot-bot:mod_dismiss";
+    const AUDIT_MESSAGE: &str = "Caught spamming by the honeypot; the account may be compromised.";
 
     #[instrument]
     async fn search_for_spam_messages(
@@ -834,6 +560,136 @@ impl Handler {
 
                 Vec::new()
             }
+        }
+    }
+
+    #[instrument]
+    async fn apply_mod_actions(
+        ctx: &Context,
+        target_user: UserId,
+        msg_content: &str,
+        log_message: &mut MessageBuilder,
+        server: (GuildId, &ServerConfig),
+    ) {
+        match server.1.mod_actions {
+            ModerationActions::Mute => {
+                // 1-day mute hardcoded for now
+                let duration = Local::now().checked_add_days(Days::new(1));
+
+                match duration {
+                    Some(time) => {
+                        if let Err(e) = server
+                            .0
+                            .edit_member(
+                                ctx,
+                                target_user,
+                                EditMember::new()
+                                    .disable_communication_until_datetime(Timestamp::from(time))
+                                    .audit_log_reason(Self::AUDIT_MESSAGE),
+                            )
+                            .await
+                        {
+                            error!(
+                                "There was an issue timing the user {} out: {}",
+                                target_user, e
+                            );
+
+                            log_message
+                                .push("⚠️ I was unable to time the user ")
+                                .user(target_user)
+                                .push_line_safe(
+                                    " out; Please make sure the compromised account is dealt with.",
+                                );
+                        } else {
+                            log_message
+                                .push_line_safe("")
+                                .push_italic_safe("The user was timed out for 1 day");
+                        }
+                    }
+                    None => {
+                        error!(
+                            "There was an issue timing the user {} out: Timeout duration returned None.",
+                            target_user
+                        );
+
+                        log_message
+                            .push("⚠️ I was unable to time the user ")
+                            .user(target_user)
+                            .push_line_safe(
+                                " out; Please make sure the compromised account is dealt with.",
+                            );
+                    }
+                }
+            }
+            ModerationActions::Kick => {
+                if let Err(e) = server
+                    .0
+                    .kick_with_reason(ctx, target_user, Self::AUDIT_MESSAGE)
+                    .await
+                {
+                    error!("There was an issue kicking the user {}: {}", target_user, e);
+
+                    log_message
+                        .push("⚠️ I was unable to kick the user ")
+                        .user(target_user)
+                        .push_line_safe(
+                            "; Please make sure the compromised account is dealt with.",
+                        );
+                } else {
+                    log_message
+                        .push_line_safe("")
+                        .push_italic_safe("The user was kicked");
+                }
+            }
+            ModerationActions::Ban => {
+                if let Err(e) = server
+                    .0
+                    .ban_with_reason(ctx, target_user, 1, Self::AUDIT_MESSAGE)
+                    .await
+                {
+                    error!("There was an issue banning the user {}: {}", target_user, e);
+
+                    log_message
+                        .push("⚠️ I was unable to ban the user ")
+                        .user(target_user)
+                        .push_line_safe(
+                            "; Please make sure the compromised account is dealt with.",
+                        );
+                } else {
+                    log_message
+                        .push_line_safe("")
+                        .push_italic_safe("The user was banned");
+                }
+            }
+        }
+
+        if server.1.erase_messages && !matches!(server.1.mod_actions, ModerationActions::Ban) {
+            let identical_messages =
+                Self::search_for_spam_messages(ctx, target_user, msg_content, server).await;
+
+            let mut deleted_count = 0usize;
+
+            for ident_msg in identical_messages {
+                if let Err(e) = ident_msg.delete(ctx).await {
+                    error!(
+                        "Unable to delete message {} in channel {}: {}",
+                        ident_msg.id, ident_msg.channel_id, e
+                    );
+
+                    log_message
+                        .push("⚠️ I was unable to delete the message in channel ")
+                        .channel(ident_msg.channel_id)
+                        .push_line_safe("; Please make sure any spam messages are deleted.");
+                } else {
+                    deleted_count += 1;
+                }
+            }
+
+            log_message.push_italic_line_safe(format!(
+                " and {deleted_count} repeated (spam) messages were deleted."
+            ));
+        } else {
+            log_message.push_italic_line_safe(".");
         }
     }
 }

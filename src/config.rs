@@ -1,6 +1,5 @@
 use std::{collections::HashMap, fs, path::PathBuf};
 
-use bitflags::bitflags;
 use clap::{Parser, ValueHint, value_parser};
 use serde::Deserialize;
 use serenity::{
@@ -50,25 +49,29 @@ pub(crate) struct ServerConfig {
     pub(crate) log_channel: ChannelId,
     pub(crate) honeypot_channel: ChannelId,
     pub(crate) mod_role: RoleId,
-    // TODO: maybe replace this with a simple enum for Ban/Kick/Mute and a boolean for deleting messages and warning mods
     #[serde(default)]
     pub(crate) mod_actions: ModerationActions,
+    #[serde(default = "ServerConfig::default_warn_mods")]
+    pub(crate) warn_mods: bool,
+    #[serde(default = "ServerConfig::default_erase_messages")]
+    pub(crate) erase_messages: bool,
     pub(crate) tolerant: bool,
 }
 
-bitflags! {
-    #[derive(Deserialize, Debug)]
-    pub(crate) struct ModerationActions: u8 {
-        const WarnMods = 0b00001;
-        const EraseMessages = 0b00010;
-        const Mute = 0b00100;
-        const Kick = 0b01000;
-        const Ban = 0b10000;
+impl ServerConfig {
+    fn default_warn_mods() -> bool {
+        true
+    }
+
+    fn default_erase_messages() -> bool {
+        true
     }
 }
 
-impl Default for ModerationActions {
-    fn default() -> Self {
-        Self::WarnMods | Self::EraseMessages | Self::Mute
-    }
+#[derive(Deserialize, Debug, Default)]
+pub(crate) enum ModerationActions {
+    #[default]
+    Mute,
+    Kick,
+    Ban,
 }
