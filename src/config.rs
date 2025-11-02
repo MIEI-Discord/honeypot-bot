@@ -50,6 +50,7 @@ pub(crate) struct ServerConfig {
     pub(crate) log_channel: ChannelId,
     pub(crate) honeypot_channel: ChannelId,
     pub(crate) mod_role: RoleId,
+    // TODO: maybe replace this with a simple enum for Ban/Kick/Mute and a boolean for deleting messages and warning mods
     #[serde(default)]
     pub(crate) mod_actions: ModerationActions,
     pub(crate) tolerant: bool,

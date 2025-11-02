@@ -1,9 +1,12 @@
+use std::str::FromStr;
+
 use chrono::{Days, Local};
 use serenity::{
     all::{
-        ButtonStyle, Context, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedAuthor,
-        CreateMessage, EditMember, EmbedMessageBuilding, EventHandler, GetMessages, GuildId,
-        Message, MessageBuilder, Ready, Timestamp, UserId,
+        ButtonStyle, ComponentInteractionDataKind, Context, CreateActionRow, CreateButton,
+        CreateEmbed, CreateEmbedAuthor, CreateMessage, EditInteractionResponse, EditMember,
+        EmbedMessageBuilding, EventHandler, GetMessages, GuildId, Interaction, Message,
+        MessageBuilder, Ready, Timestamp, UserId,
     },
     async_trait,
 };
@@ -87,9 +90,13 @@ impl EventHandler for Handler {
                                 // Let the mods decide for themselves
                                 if serv.tolerant && identical_messages.is_empty() {
                                     let mod_actions = CreateActionRow::Buttons(vec![
-                                        CreateButton::new(Self::ACCEPT_BUTTON_ID)
-                                            .label("Perform Mod Actions")
-                                            .style(ButtonStyle::Danger),
+                                        CreateButton::new(format!(
+                                            "{}:{}",
+                                            Self::ACCEPT_BUTTON_ID,
+                                            msg.author.id
+                                        ))
+                                        .label("Perform Mod Actions")
+                                        .style(ButtonStyle::Danger),
                                         CreateButton::new(Self::REJECT_BUTTON_ID)
                                             .label("Dismiss")
                                             .style(ButtonStyle::Secondary),
@@ -295,6 +302,325 @@ impl EventHandler for Handler {
                 error!(
                     "There was an issue loading the bot's configuration. Please check if the configuration file is available and contains all the necessary configuration options."
                 );
+            }
+        }
+    }
+
+    #[instrument]
+    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
+        if let Interaction::Component(inter) = interaction {
+            if let Err(e) = inter.defer(&ctx).await {
+                todo!();
+            }
+
+            let self_id = match ctx.http.application_id() {
+                Some(id) => id,
+                None => {
+                    error!(
+                        "Error obtaining the application ID for this bot; the Discord application may be misconfigured or there may be a connectivity issue."
+                    );
+                    return;
+                }
+            };
+
+            if inter.application_id != self_id {
+                // Interaction doesn't belong to our application, leave it for other bots to deal with
+                info!(
+                    "Interaction {:?} does not belong to this application, pass it on",
+                    inter
+                );
+
+                return;
+            }
+
+            let ctx_data = ctx.data.read();
+
+            match ctx_data.await.get::<Config>() {
+                Some(cfg) => {
+                    if inter.guild_id.is_none()
+                        || !cfg.servers.contains_key(&inter.guild_id.unwrap())
+                    {
+                        warn!(
+                            "Somehow, an interaction was spawned for this application which doesn't belong in a configured server; please check if the bot is configured properly; there may be outdated configuration or a server which was once configured and no longer is: {:?}",
+                            inter
+                        );
+
+                        return;
+                    }
+
+                    let inter_serv = inter.guild_id.unwrap();
+
+                    let serv_cfg = cfg.servers.get(&inter_serv).unwrap();
+
+                    if inter.channel_id != serv_cfg.log_channel {
+                        warn!(
+                            "Somehow, an interaction was spawned for this application in server {} outside of its configured log channel (configured channel: {}; actual channel: {})",
+                            inter_serv, serv_cfg.log_channel, inter.channel_id
+                        );
+
+                        return;
+                    }
+
+                    if inter
+                        .member
+                        .as_ref()
+                        .unwrap()
+                        .roles
+                        .contains(&serv_cfg.mod_role)
+                    {
+                        match inter.data.kind {
+                            ComponentInteractionDataKind::Button => {
+                                match inter.data.custom_id.as_str() {
+                                    Self::REJECT_BUTTON_ID => {
+                                        let response_mesg = MessageBuilder::new()
+                                            .push(&inter.message.content)
+                                            .push_line_safe("")
+                                            .push_line_safe("")
+                                            .push_italic_line_safe("No action was taken.")
+                                            .build();
+
+                                        let mod_actions = CreateActionRow::Buttons(vec![
+                                            CreateButton::new(Self::ACCEPT_BUTTON_ID)
+                                                .label("Perform Mod Actions")
+                                                .style(ButtonStyle::Danger)
+                                                .disabled(true),
+                                            CreateButton::new(Self::REJECT_BUTTON_ID)
+                                                .label("Dismiss")
+                                                .style(ButtonStyle::Secondary)
+                                                .disabled(true),
+                                        ]);
+
+                                        if let Err(e) = inter
+                                            .edit_response(
+                                                &ctx,
+                                                EditInteractionResponse::new()
+                                                    .content(response_mesg)
+                                                    .components(vec![mod_actions]),
+                                            )
+                                            .await
+                                        {
+                                            error!(
+                                                "There was an issue editing the log message to acknowledge the dismissal: {}",
+                                                e
+                                            );
+                                            todo!();
+                                        }
+                                    }
+                                    but_id if but_id.starts_with(Self::ACCEPT_BUTTON_ID) => {
+                                        let target_user_id = match UserId::from_str(
+                                            &but_id[Self::ACCEPT_BUTTON_ID.len()..],
+                                        ) {
+                                            Ok(id) => id,
+                                            Err(e) => todo!(),
+                                        };
+
+                                        let mut response_mesg = MessageBuilder::new();
+                                        response_mesg.push(&inter.message.content);
+
+                                        let mut first_action = true;
+                                        if serv_cfg.mod_actions.contains(ModerationActions::Ban) {
+                                            first_action = false;
+                                            response_mesg
+                                                .push_line_safe("")
+                                                .push_line_safe("")
+                                                .push_italic_safe("The user was banned");
+
+                                            if let Err(e) = inter_serv.ban_with_reason(&ctx, target_user_id, 1, "Caught spamming by the honeypot; account may be compromised").await {
+                                                error!("There was an issue banning the user {}: {}", target_user_id, e);
+
+                                                let warning_message = MessageBuilder::new()
+                                                    .push("⚠️ I was unable to ban the user ")
+                                                    .user(target_user_id)
+                                                    .push_line_safe("; Please make sure the compromised account is dealt with.")
+                                                    .build();
+
+                                                if let Err(e) = serv_cfg.log_channel.say(&ctx, warning_message).await {
+                                                    error!("There was an issue sending the ban failure warning to the channel {}: {}", serv_cfg.log_channel, e);
+                                                }
+                                            }
+                                        }
+
+                                        if serv_cfg.mod_actions.contains(ModerationActions::Kick) {
+                                            if first_action {
+                                                first_action = false;
+
+                                                response_mesg
+                                                    .push_line_safe("")
+                                                    .push_line_safe("")
+                                                    .push_italic_safe("The user was kicked");
+                                            }
+
+                                            if let Err(e) = inter_serv.kick_with_reason(&ctx, target_user_id, "Caught spamming by the honeypot; account may be compromised").await {
+                                                error!("There was an issue kicking the user {}: {}", target_user_id, e);
+
+                                                let warning_message = MessageBuilder::new()
+                                                    .push("⚠️ I was unable to kick the user ")
+                                                    .user(target_user_id)
+                                                    .push_line_safe("; Please make sure the compromised account is dealt with.")
+                                                    .build();
+
+                                                if let Err(e) = serv_cfg.log_channel.say(&ctx, warning_message).await {
+                                                    error!("There was an issue sending the kick failure warning to the channel {}: {}", serv_cfg.log_channel, e);
+                                                }
+                                            }
+                                        }
+
+                                        if serv_cfg.mod_actions.contains(ModerationActions::Mute) {
+                                            if first_action {
+                                                first_action = false;
+
+                                                response_mesg
+                                                    .push_line_safe("")
+                                                    .push_line_safe("")
+                                                    .push_italic_safe(
+                                                        "The user was timed out for 1 day",
+                                                    );
+                                            }
+
+                                            // 1-day mute hardcoded for now
+                                            let duration =
+                                                Local::now().checked_add_days(Days::new(1));
+
+                                            match duration {
+                                                Some(time) => {
+                                                    if let Err(e) = inter_serv.edit_member(
+                                                        &ctx,
+                                                        target_user_id,
+                                                        EditMember::new()
+                                                            .disable_communication_until_datetime(Timestamp::from(time))
+                                                            .audit_log_reason("Caught spamming by the honeypot; account may be compromised")
+                                                    ).await {
+                                                        error!("There was an issue timing the user {} out: {}", target_user_id, e);
+
+                                                        let warning_message = MessageBuilder::new()
+                                                            .push("⚠️ I was unable to time the user ")
+                                                            .user(target_user_id)
+                                                            .push_line_safe(" out; Please make sure the compromised account is dealt with.")
+                                                            .build();
+
+                                                        if let Err(e) = serv_cfg.log_channel.say(&ctx, warning_message).await {
+                                                            error!("There was an issue sending the timeout failure warning to the channel {}: {}", serv_cfg.log_channel, e);
+                                                        }
+                                                    }
+                                                },
+                                                None => {
+                                                    error!("There was an issue timing the user {} out: Timeout duration returned None.", target_user_id);
+
+                                                    let warning_message = MessageBuilder::new()
+                                                        .push("⚠️ I was unable to time the user ")
+                                                        .user(target_user_id)
+                                                        .push_line_safe(" out; Please make sure the compromised account is dealt with.")
+                                                        .build();
+
+                                                    if let Err(e) = serv_cfg.log_channel.say(&ctx, warning_message).await {
+                                                        error!("There was an issue sending the timeout failure warning to the channel {}: {}", serv_cfg.log_channel, e);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if serv_cfg
+                                            .mod_actions
+                                            .contains(ModerationActions::EraseMessages)
+                                            && !serv_cfg
+                                                .mod_actions
+                                                .contains(ModerationActions::Ban)
+                                        {
+                                            if first_action {
+                                                response_mesg
+                                                    .push_line_safe("")
+                                                    .push_line_safe("")
+                                                    .push_safe(
+                                                        "The user's spam messages were deleted",
+                                                    );
+                                            } else {
+                                                response_mesg.push_italic_safe(
+                                                    " and the user's spam messages were deleted",
+                                                );
+                                            }
+
+                                            let usr_msg = inter.message.content_safe(&ctx);
+
+                                            let identical_messages =
+                                                Self::search_for_spam_messages(
+                                                    &ctx,
+                                                    target_user_id,
+                                                    &usr_msg,
+                                                    (inter_serv, serv_cfg),
+                                                )
+                                                .await;
+
+                                            for ident_msg in identical_messages {
+                                                if let Err(e) = ident_msg.delete(&ctx).await {
+                                                    error!(
+                                                        "Unable to delete message {} in channel {}: {}",
+                                                        ident_msg.id, ident_msg.channel_id, e
+                                                    );
+
+                                                    let warning_message = MessageBuilder::new()
+                                                        .push("⚠️ I was unable to delete the message in channel ")
+                                                        .channel(ident_msg.channel_id)
+                                                        .push_line_safe("; Please make sure any spam messages are deleted.")
+                                                        .build();
+
+                                                    if let Err(e) = serv_cfg
+                                                        .log_channel
+                                                        .say(&ctx, warning_message)
+                                                        .await
+                                                    {
+                                                        error!(
+                                                            "There was an issue sending the message deletion failure warning regarding message {} to the channel {}: {}",
+                                                            ident_msg.id, serv_cfg.log_channel, e
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        let mod_actions = CreateActionRow::Buttons(vec![
+                                            CreateButton::new(Self::ACCEPT_BUTTON_ID)
+                                                .label("Perform Mod Actions")
+                                                .style(ButtonStyle::Danger)
+                                                .disabled(true),
+                                            CreateButton::new(Self::REJECT_BUTTON_ID)
+                                                .label("Dismiss")
+                                                .style(ButtonStyle::Secondary)
+                                                .disabled(true),
+                                        ]);
+
+                                        if let Err(e) = inter
+                                            .edit_response(
+                                                &ctx,
+                                                EditInteractionResponse::new()
+                                                    .content(response_mesg.build())
+                                                    .components(vec![mod_actions]),
+                                            )
+                                            .await
+                                        {
+                                            error!(
+                                                "There was an issue editing the log message to acknowledge the dismissal: {}",
+                                                e
+                                            );
+                                            todo!();
+                                        }
+                                    }
+                                    _ => todo!(),
+                                }
+                            }
+                            _ => {
+                                // WTF
+                                warn!(
+                                    "Somehow, an interaction was spawned with the correct ID but the wrong kind of component... I don't even know... {:?}",
+                                    inter.data
+                                );
+                                return;
+                            }
+                        }
+                    } else {
+                        todo!();
+                    }
+                }
+                None => todo!(),
             }
         }
     }
