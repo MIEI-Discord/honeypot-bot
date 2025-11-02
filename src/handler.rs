@@ -7,7 +7,7 @@ use serenity::{
     },
     async_trait,
 };
-use tracing::{error, instrument, warn};
+use strsim::jaro_winkler;
 use tracing::{error, info, instrument, warn};
 
 use crate::config::{Config, ModerationActions, ServerConfig};
@@ -458,10 +458,11 @@ impl Handler {
                 let mut matched_mesgs: Vec<Message> = Vec::with_capacity(chans.len());
                 for (_, chan) in chans {
                     if chan.id != server.1.honeypot_channel {
-                        match chan.messages(ctx, GetMessages::new().limit(100)).await {
+                        match chan.messages(ctx, GetMessages::new().limit(10)).await {
                             Ok(mesgs) => {
                                 matched_mesgs.extend(mesgs.into_iter().filter(|mesg| {
-                                    mesg.author.id == user && mesg.content_safe(ctx) == content
+                                    mesg.author.id == user
+                                        && jaro_winkler(&mesg.content_safe(ctx), content) >= 0.75
                                 }));
                             }
                             Err(e) => {
