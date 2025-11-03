@@ -3,10 +3,11 @@ use std::str::FromStr;
 use chrono::{Days, Local};
 use serenity::{
     all::{
-        ButtonStyle, ComponentInteractionDataKind, Context, CreateActionRow, CreateAttachment,
-        CreateButton, CreateEmbed, CreateEmbedAuthor, CreateMessage, EditInteractionResponse,
-        EditMember, EmbedMessageBuilding, EventHandler, GetMessages, GuildId, Interaction,
-        MESSAGE_CODE_LIMIT, Message, MessageBuilder, Ready, Timestamp, UserId,
+        ButtonStyle, Channel, ComponentInteractionDataKind, Context, CreateActionRow,
+        CreateAttachment, CreateButton, CreateEmbed, CreateEmbedAuthor, CreateInteractionResponse,
+        CreateInteractionResponseMessage, CreateMessage, EditInteractionResponse, EditMember,
+        EmbedMessageBuilding, EventHandler, GetMessages, GuildId, Interaction, MESSAGE_CODE_LIMIT,
+        Message, MessageBuilder, Ready, Timestamp, UserId,
     },
     async_trait,
 };
@@ -166,17 +167,23 @@ impl EventHandler for Handler {
                         "Bot received a message outside of a server, possibly a DM - sending help message."
                     );
 
-                    let warning_message = MessageBuilder::new()
-                        .push_line_safe("🍯 Hi! I am a honeypot bot designed to catch compromised accounts spamming phishing URLs in servers.")
-                        .push_line_safe("I have no functionality to offer you outside of this.")
-                        .push_line("- If you think you were unfairly banned by this bot and would like to appeal, please contact the moderators of the server in question.")
-                        .push_line("- If you would like to submit an issue regarding the bot (bug report, improvement request, etc.), please do so at ")
-                        .push_named_link_safe("the official repository", "https://github.com/MIEI-Discord/honeypot-bot")
-                        .push_line_safe(".")
-                        .build();
+                    if msg
+                        .channel(&ctx)
+                        .await
+                        .is_ok_and(|chan| matches!(chan, Channel::Private(_)))
+                    {
+                        let warning_message = MessageBuilder::new()
+                            .push_line_safe("🍯 Hi! I am a honeypot bot designed to catch compromised accounts spamming phishing URLs in servers.")
+                            .push_line_safe("I have no functionality to offer you outside of this.")
+                            .push_line("- If you think you were unfairly banned by this bot and would like to appeal, please contact the moderators of the server in question.")
+                            .push_line("- If you would like to submit an issue regarding the bot (bug report, improvement request, etc.), please do so at ")
+                            .push_named_link_safe("the official repository", "https://github.com/MIEI-Discord/honeypot-bot")
+                            .push_line_safe(".")
+                            .build();
 
-                    if let Err(e) = msg.reply(&ctx, warning_message).await {
-                        error!("There was an issue sending the help message: {}", e);
+                        if let Err(e) = msg.reply(&ctx, warning_message).await {
+                            error!("There was an issue sending the help message: {}", e);
+                        }
                     }
                 }
             }
@@ -192,7 +199,11 @@ impl EventHandler for Handler {
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         if let Interaction::Component(inter) = interaction {
             if let Err(e) = inter.defer(&ctx).await {
-                todo!();
+                error!(
+                    "There was an issue deferring the interaction {:#?}: {}",
+                    inter, e
+                );
+                return;
             }
 
             let self_id = match ctx.http.application_id() {
@@ -208,7 +219,7 @@ impl EventHandler for Handler {
             if inter.application_id != self_id {
                 // Interaction doesn't belong to our application, leave it for other bots to deal with
                 info!(
-                    "Interaction {:?} does not belong to this application, pass it on",
+                    "Interaction {:#?} does not belong to this application, pass it on",
                     inter
                 );
 
@@ -223,7 +234,7 @@ impl EventHandler for Handler {
                         || !cfg.servers.contains_key(&inter.guild_id.unwrap())
                     {
                         warn!(
-                            "Somehow, an interaction was spawned for this application which doesn't belong in a configured server; please check if the bot is configured properly; there may be outdated configuration or a server which was once configured and no longer is: {:?}",
+                            "Somehow, an interaction was spawned for this application which doesn't belong to a configured server; please check if the bot is configured properly; there may be outdated configuration or a server which was once configured and no longer is: {:#?}",
                             inter
                         );
 
@@ -276,7 +287,7 @@ impl EventHandler for Handler {
                                             .edit_response(
                                                 &ctx,
                                                 EditInteractionResponse::new()
-                                                    .content(response_mesg)
+                                                    .content(&response_mesg)
                                                     .components(vec![mod_actions]),
                                             )
                                             .await
@@ -285,7 +296,22 @@ impl EventHandler for Handler {
                                                 "There was an issue editing the log message to acknowledge the dismissal: {}",
                                                 e
                                             );
-                                            todo!();
+
+                                            if let Err(e) = inter
+                                                .create_response(
+                                                    &ctx,
+                                                    CreateInteractionResponse::Message(
+                                                        CreateInteractionResponseMessage::new()
+                                                            .content(response_mesg),
+                                                    ),
+                                                )
+                                                .await
+                                            {
+                                                error!(
+                                                    "There was an issue sending the dismissal message as a response: {}",
+                                                    e
+                                                );
+                                            }
                                         }
                                     }
                                     but_id if but_id.starts_with(Self::ACCEPT_BUTTON_ID) => {
@@ -293,16 +319,53 @@ impl EventHandler for Handler {
                                             &but_id[Self::ACCEPT_BUTTON_ID.len()..],
                                         ) {
                                             Ok(id) => id,
-                                            Err(e) => todo!(),
+                                            Err(e) => {
+                                                error!(
+                                                    "There was an issue retrieving the original user's ID from the button ID {}: {}",
+                                                    but_id, e
+                                                );
+
+                                                if let Err(e) = inter
+                                                    .create_response(
+                                                        &ctx,
+                                                        CreateInteractionResponse::Message(
+                                                            CreateInteractionResponseMessage::new()
+                                                                .content("⚠️ I was unable to retrieve the original user's ID; Please check if the original message is still present and try again."),
+                                                        ),
+                                                    )
+                                                    .await
+                                                {
+                                                    error!("There was an issue sending the user ID failure warning message: {}", e);
+                                                }
+
+                                                return;
+                                            }
                                         };
 
-                                        let original_msg_content =
-                                            match inter.message.embeds[0].description {
-                                                Some(ref msg) => msg,
-                                                None => {
-                                                    todo!();
+                                        let original_msg_content = match inter.message.embeds[0]
+                                            .description
+                                        {
+                                            Some(ref msg) => msg,
+                                            None => {
+                                                error!(
+                                                    "There was an issue retrieving the original message's content: {:#?}",
+                                                    inter.message
+                                                );
+
+                                                if let Err(e) = inter
+                                                    .create_response(
+                                                        &ctx,
+                                                        CreateInteractionResponse::Message(CreateInteractionResponseMessage::new()
+                                                            .content("⚠️ I was unable to retrieve the original message caught by the honeypot; Please check if the original message is still present and try again.")
+                                                        )
+                                                    )
+                                                    .await {
+                                                    error!("There was an issue sending the message retrieval failure warning: {}", e);
                                                 }
-                                            };
+
+                                                return;
+                                            }
+                                        };
 
                                         let mut response_mesg = MessageBuilder::new();
                                         response_mesg
@@ -337,11 +400,12 @@ impl EventHandler for Handler {
                                         if response_content.chars().count() > MESSAGE_CODE_LIMIT {
                                             // Log message is too big, send as file instead
                                             edit_response = edit_response.new_attachment(CreateAttachment::bytes(
-                                                response_content.into_bytes(),
+                                                response_content.clone().into_bytes(),
                                                 "mod_log.txt"
                                             ).description("Actions were taken, please check the file for the logs."));
                                         } else {
-                                            edit_response = edit_response.content(response_content);
+                                            edit_response =
+                                                edit_response.content(&response_content);
                                         }
 
                                         if let Err(e) = inter
@@ -352,29 +416,91 @@ impl EventHandler for Handler {
                                             .await
                                         {
                                             error!(
-                                                "There was an issue editing the log message to acknowledge the dismissal: {}",
+                                                "There was an issue editing the log message to acknowledge the actions taken: {}",
                                                 e
                                             );
-                                            todo!();
+
+                                            let mut fallback_response =
+                                                CreateInteractionResponseMessage::new();
+
+                                            if response_content.chars().count() > MESSAGE_CODE_LIMIT
+                                            {
+                                                fallback_response = fallback_response.add_file(CreateAttachment::bytes(
+                                                    response_content.into_bytes(),
+                                                    "mod_log.txt"
+                                                ).description("Actions were taken, please check the file for the logs."));
+                                            } else {
+                                                fallback_response =
+                                                    fallback_response.content(response_content);
+                                            }
+
+                                            if let Err(e) = inter
+                                                .create_response(
+                                                    &ctx,
+                                                    CreateInteractionResponse::Message(
+                                                        fallback_response,
+                                                    ),
+                                                )
+                                                .await
+                                            {
+                                                error!(
+                                                    "There was an issue sending the fallback message to acknowledge the actions taken: {}",
+                                                    e
+                                                );
+                                            }
                                         }
                                     }
-                                    _ => todo!(),
+                                    unknown_id => {
+                                        warn!(
+                                            "A button registered with an unknown ID was clicked; the bot or Discord application may be misconfigured or outdated: {}",
+                                            unknown_id
+                                        );
+                                    }
                                 }
                             }
                             _ => {
                                 // WTF
                                 warn!(
-                                    "Somehow, an interaction was spawned with the correct ID but the wrong kind of component... I don't even know... {:?}",
+                                    "Somehow, an interaction was spawned with the correct app ID but the wrong kind of component... I don't even know... {:#?}",
                                     inter.data
                                 );
                                 return;
                             }
                         }
                     } else {
-                        todo!();
+                        // User doesn't have the right permissions to use this interaction
+                        warn!(
+                            "User {} tried to use the bot without the proper permissions; please check if this was a mistake.",
+                            inter.user.id
+                        );
+
+                        let forbidden_response = CreateInteractionResponseMessage::new().content(
+                            MessageBuilder::new()
+                                .push_safe("🚫 You don't have permission to use this bot's functionality; Please contact ")
+                                .role(serv_cfg.mod_role)
+                                .push_line_safe("if you believe this is a mistake.")
+                                .build()
+                        ).ephemeral(true);
+
+                        if let Err(e) = inter
+                            .create_response(
+                                &ctx,
+                                CreateInteractionResponse::Message(forbidden_response),
+                            )
+                            .await
+                        {
+                            error!(
+                                "There was an issue sending the forbidden message to the user {}: {}",
+                                inter.user.id, e
+                            );
+                        }
                     }
                 }
-                None => todo!(),
+                None => {
+                    error!(
+                        "There was an issue loading the bot's configuration. Please check if the configuration file is available and contains all the necessary configuration options."
+                    );
+                }
             }
         }
     }
