@@ -61,6 +61,7 @@
             helix-git
             updateFlakes
             pkgs.zed-editor-fhs
+            pkgs.zellij
           ]
           ++ builtins.attrValues config.treefmt.build.programs;
       };

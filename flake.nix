@@ -37,8 +37,70 @@
         formatter = "dev";
       };
 
-      perSystem = _: {
+      perSystem = {
+        config,
+        lib,
+        ...
+      }: let
+        inherit (config.rust-project) crane-lib;
+        crate-cfg = config.rust-project.crates.honeypot-bot;
+
+        common =
+          crate-cfg.crane.args
+          // {
+            inherit (config.rust-project) src;
+            pname = "honeypot-bot";
+            cargoExtraArgs = "-p honeypot-bot";
+            inherit (crate-cfg.cargoToml.package) version;
+            strictDeps = true;
+          };
+
+        artifactsDev = crane-lib.buildDepsOnly (common
+          // {
+            cargoExtraArgs = "--locked --features dev_env";
+            CARGO_PROFILE = "dev";
+          });
+
+        clippyDev = crane-lib.cargoClippy (common
+          // {
+            cargoArtifacts = artifactsDev;
+            cargoExtraArgs = "--locked --features dev_env";
+            CARGO_PROFILE = "dev";
+            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+            meta =
+              common.meta or {}
+              // {
+                description = "Clippy check for the honeypot-bot crate (with debug profile and `dev_env` feature enabled)";
+              };
+          });
+
+        clippyRelease = crane-lib.cargoClippy (common
+          // {
+            inherit (crate-cfg.crane.outputs.drv.clippy) cargoArtifacts;
+            cargoExtraArgs = "--locked";
+            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+            meta =
+              common.meta or {}
+              // {
+                description = "Clippy check for the honeypot-bot crate";
+              };
+          });
+      in {
         rust-project = {
+          crates = {
+            honeypot-bot = {
+              autoWire = lib.mkForce ["crate"];
+
+              crane.outputs.checks = {
+                honeypot-bot-clippy = clippyRelease;
+                honeypot-bot-debug-clippy = clippyDev;
+              };
+            };
+          };
+        };
+
+        packages = {
+          default = config.packages.honeypot-bot;
         };
       };
     };
