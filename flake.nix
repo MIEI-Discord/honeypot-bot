@@ -8,6 +8,7 @@
       url = "github:juspay/rust-flake";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    actions-nix.url = "github:nialov/actions.nix";
   };
 
   outputs = inputs:
@@ -18,6 +19,7 @@
         inputs.flake-parts.flakeModules.partitions
         inputs.rust-flake.flakeModules.default
         inputs.rust-flake.flakeModules.nixpkgs
+        ./ci
       ];
 
       partitions = {
