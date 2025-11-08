@@ -1,0 +1,4 @@
+builds:
+  include:
+    - "checks.*.*"
+  branch: main

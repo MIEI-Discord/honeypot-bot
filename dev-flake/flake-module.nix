@@ -20,10 +20,11 @@
 
       runtimeInputs = [
         pkgs.fd
+        pinix-git
       ];
 
       text = ''
-        fd -E templates flake.nix -x nix flake update --flake \{//\}
+        fd -E templates flake.nix -x pix --pix-show-downloads flake update --flake \{//\}
       '';
     };
   in {
@@ -42,6 +43,8 @@
             enable = true;
             package = config.rust-project.toolchain;
           };
+
+          yamlfmt.enable = true;
         };
       };
     };
@@ -62,6 +65,7 @@
             updateFlakes
             pkgs.zed-editor-fhs
             pkgs.zellij
+            pkgs.yaml-language-server
           ]
           ++ builtins.attrValues config.treefmt.build.programs;
       };
