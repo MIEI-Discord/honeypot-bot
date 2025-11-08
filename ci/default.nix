@@ -1,16 +1,16 @@
-{inputs, ...}: {
-  imports = [
-    inputs.actions-nix.flakeModules.default
-  ];
-
+_: {
   flake = {
     actions-nix = {
       pre-commit.enable = true;
 
       workflows = {
-        ".github/workflows/main.yaml" = {
+        ".github/workflows/ci.yaml" = {
           on = {
-            push.branches = ["main"];
+            push = {
+              branches = ["main"];
+
+              paths = ["**.nix" "**.rs" "**.toml" "**.lock"];
+            };
             # Trigger workflow manually
             workflow_dispatch = {};
             pull_request = {};

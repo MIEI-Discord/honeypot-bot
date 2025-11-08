@@ -19,6 +19,8 @@
         inputs.flake-parts.flakeModules.partitions
         inputs.rust-flake.flakeModules.default
         inputs.rust-flake.flakeModules.nixpkgs
+        inputs.actions-nix.flakeModules.default
+        ./windows-tmp.nix
         ./ci
       ];
 
@@ -93,9 +95,11 @@
             honeypot-bot = {
               autoWire = lib.mkForce ["crate"];
 
-              crane.outputs.checks = {
-                honeypot-bot-clippy = clippyRelease;
-                honeypot-bot-debug-clippy = clippyDev;
+              crane.outputs = {
+                checks = {
+                  honeypot-bot-clippy = clippyRelease;
+                  honeypot-bot-debug-clippy = clippyDev;
+                };
               };
             };
           };
